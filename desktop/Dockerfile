@@ -1,6 +1,6 @@
 # Ubuntu Desktop with VNC for Autonomous Agent
 # ==============================================
-# Using Chromium (ARM64 compatible) instead of Chrome
+# Includes Chrome, VS Code, and development tools
 
 FROM ubuntu:22.04
 
@@ -68,6 +68,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-liberation \
     xdg-utils \
     ca-certificates \
+    # Additional dependencies for VS Code
+    libsecret-1-0 \
+    libxss1 \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
@@ -84,9 +87,20 @@ ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 
 # ============================================================================
+# Visual Studio Code
+# ============================================================================
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft-archive-keyring.gpg] https://packages.microsoft.com/repos/code stable main" > /etc/apt/sources.list.d/vscode.list \
+    && apt-get update \
+    && apt-get install -y code \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ============================================================================
 # Puppeteer
 # ============================================================================
 RUN npm install -g puppeteer
+
 
 # ============================================================================
 # Create agent user
