@@ -147,7 +147,7 @@ WORKDIR /app
 
 # Copy agent requirements and install
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed -r requirements.txt
 
 # Copy agent code
 COPY agent/ ./agent/
