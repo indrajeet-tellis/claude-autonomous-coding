@@ -1,0 +1,45 @@
+# Example Task: REST API
+# =======================
+
+name: "Notes REST API"
+
+description: |
+  Build a REST API for a notes application using FastAPI.
+  
+  Endpoints:
+  - GET /notes - List all notes
+  - GET /notes/{id} - Get a specific note
+  - POST /notes - Create a new note
+  - PUT /notes/{id} - Update a note
+  - DELETE /notes/{id} - Delete a note
+  - GET /notes/search?q=term - Search notes
+  
+  Note model:
+  - id: auto-generated UUID
+  - title: string, required
+  - content: string, required
+  - tags: list of strings, optional
+  - created_at: timestamp
+  - updated_at: timestamp
+  
+  Requirements:
+  - FastAPI with automatic OpenAPI docs
+  - SQLite database with SQLAlchemy ORM
+  - Pydantic models for validation
+  - Proper error handling with HTTP status codes
+  - CORS enabled
+  - Unit tests with pytest
+
+success_criteria:
+  - "Server runs on http://localhost:8000"
+  - "OpenAPI docs available at /docs"
+  - "Can create, read, update, delete notes via curl"
+  - "Search endpoint finds notes by title/content"
+  - "All tests pass"
+  - "Invalid requests return proper error messages"
+
+preferences:
+  language: "python"
+  framework: "fastapi"
+  database: "sqlite"
+  testing: "pytest"

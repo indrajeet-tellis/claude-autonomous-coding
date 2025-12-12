@@ -1,0 +1,36 @@
+# Git ignore for docker-autonomous-agent
+
+# Environment files with secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# Docker
+.docker/
+
+# Workspace - user content
+workspace/
+
+# Screenshots - generated
+screenshots/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Agent state
+.agent_progress.json

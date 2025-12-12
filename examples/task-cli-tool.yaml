@@ -1,0 +1,41 @@
+# Example Task: Python CLI Tool
+# ==============================
+
+name: "File Organizer CLI Tool"
+
+description: |
+  Build a Python CLI tool that organizes files in a directory by their type.
+  
+  Features:
+  - Accept a source directory as argument
+  - Categorize files by extension:
+    - Images: .jpg, .png, .gif, .svg, .webp
+    - Documents: .pdf, .doc, .docx, .txt, .md
+    - Videos: .mp4, .mkv, .avi, .mov
+    - Audio: .mp3, .wav, .flac, .m4a
+    - Code: .py, .js, .ts, .html, .css, .json
+    - Archives: .zip, .tar, .gz, .rar
+    - Other: everything else
+  - Create subdirectories for each category
+  - Move files into appropriate directories
+  - Show progress and summary
+  - --dry-run flag to preview without moving
+  - --undo flag to reverse last operation
+  - Colorful terminal output
+  
+  Use:
+  - Click for CLI framework
+  - Rich for pretty output
+  - pathlib for file operations
+
+success_criteria:
+  - "Running 'python organizer.py --help' shows usage"
+  - "Running with a test directory organizes files correctly"
+  - "--dry-run shows what would happen without moving"
+  - "Summary shows count of files moved per category"
+  - "Output is colorful and easy to read"
+
+preferences:
+  language: "python"
+  cli_framework: "click"
+  output_style: "rich"

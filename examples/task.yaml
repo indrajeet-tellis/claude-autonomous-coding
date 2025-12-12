@@ -1,0 +1,38 @@
+# Example Task: Build a Todo Application
+# ======================================
+# Place this file in your workspace as task.yaml
+
+name: "Full-Stack Todo Application"
+
+description: |
+  Build a complete todo application with the following features:
+  
+  Frontend:
+  - Modern React app with Vite
+  - Beautiful dark theme with gradient accents
+  - List todos with completion status
+  - Add new todos with an input field
+  - Mark todos as complete/incomplete
+  - Delete todos
+  - Filter by: All, Active, Completed
+  - Persistent storage (localStorage)
+  - Smooth animations on add/delete
+  - Responsive design (mobile + desktop)
+  
+  The app should feel polished and professional, not like a basic tutorial project.
+
+success_criteria:
+  - "App runs on http://localhost:3000"
+  - "Can add a new todo by typing and pressing Enter"
+  - "Can mark a todo as complete by clicking it"
+  - "Can delete a todo with a delete button"
+  - "Filter buttons work correctly"
+  - "Todos persist after page refresh"
+  - "UI looks modern with dark theme"
+  - "No console errors"
+
+preferences:
+  frontend: "react"
+  build_tool: "vite"
+  styling: "css"
+  ui_style: "modern dark theme with glassmorphism"
