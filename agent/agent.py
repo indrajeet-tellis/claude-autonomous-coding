@@ -3,10 +3,8 @@
 Autonomous Coding Agent with Claude Agent SDK
 ==============================================
 
-Agent that uses the official Claude Agent SDK for enhanced streaming output,
-built-in tools, and better conversation management.
-
-Integrates with the dashboard API for logging, progress, and screenshots.
+Uses ClaudeSDKClient for streaming output with detailed tool logging.
+Integrates with the dashboard API for real-time logs and progress.
 """
 
 import asyncio
@@ -14,7 +12,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Optional
 from datetime import datetime
 
 import httpx
@@ -26,10 +23,11 @@ from rich.markdown import Markdown
 # Claude Agent SDK imports
 try:
     from claude_agent_sdk import (
-        query,
         ClaudeAgentOptions,
+        ClaudeSDKClient,
         AssistantMessage,
         UserMessage,
+        SystemMessage,
         ResultMessage,
         TextBlock,
         ToolUseBlock,
@@ -38,15 +36,14 @@ try:
     SDK_AVAILABLE = True
 except ImportError:
     SDK_AVAILABLE = False
-    print("Warning: claude-agent-sdk not installed, falling back to custom loop")
+    print("Warning: claude-agent-sdk not installed")
 
 console = Console()
 
 # Configuration
 WORKSPACE = Path(os.environ.get("WORKSPACE", "/workspace"))
 API_URL = os.environ.get("API_URL", "http://backend:8000")
-MAX_ITERATIONS = int(os.environ.get("MAX_ITERATIONS", "500"))
-AGENT_HEADLESS = os.environ.get("AGENT_HEADLESS", "false").lower() == "true"
+MAX_TURNS = int(os.environ.get("MAX_ITERATIONS", "500"))
 
 
 # ============================================================================
@@ -64,17 +61,17 @@ async def log_to_api(task_id: str, level: str, message: str, tool: str = None):
                 json={
                     "taskId": task_id,
                     "level": level,
-                    "message": message[:2000],  # Truncate long messages
+                    "message": message[:4000],  # Allow longer messages
                     "tool": tool,
                 },
                 timeout=5.0
             )
     except Exception as e:
-        console.print(f"[dim]Failed to send log to API: {e}[/dim]")
+        console.print(f"[dim]Failed to send log: {e}[/dim]")
 
 
 async def update_task_status(task_id: str, status: str, progress: int = None):
-    """Update task status in dashboard via internal endpoint."""
+    """Update task status in dashboard."""
     if task_id == "local":
         return
     try:
@@ -85,21 +82,6 @@ async def update_task_status(task_id: str, status: str, progress: int = None):
             await client.patch(
                 f"{API_URL}/api/tasks/{task_id}/status",
                 json=data,
-                timeout=5.0
-            )
-    except Exception as e:
-        console.print(f"[dim]Failed to update task status: {e}[/dim]")
-
-
-async def register_screenshot(task_id: str, filename: str):
-    """Register screenshot with dashboard."""
-    if task_id == "local":
-        return
-    try:
-        async with httpx.AsyncClient() as client:
-            await client.post(
-                f"{API_URL}/api/screenshots",
-                params={"task_id": task_id, "filename": filename},
                 timeout=5.0
             )
     except Exception:
@@ -118,9 +100,7 @@ def load_task() -> dict:
         return {
             "id": "local",
             "name": "Interactive Mode",
-            "description": "No task.yaml found. Running in interactive mode.",
-            "success_criteria": [],
-            "preferences": {},
+            "description": "No task.yaml found.",
             "workspace": str(WORKSPACE)
         }
     
@@ -130,7 +110,6 @@ def load_task() -> dict:
     if "id" not in task:
         task["id"] = "local"
     
-    # Set workspace path
     if "workspace" in task:
         task["workspace_path"] = Path(task["workspace"])
     else:
@@ -140,100 +119,116 @@ def load_task() -> dict:
 
 
 def format_task_prompt(task: dict) -> str:
-    """Format the task into a prompt for the SDK."""
+    """Format the task into a prompt."""
     prompt = f"""## Task: {task.get('name', 'Unnamed Task')}
 
 {task.get('description', 'No description provided.')}
-
-### Success Criteria
 """
+    
     criteria = task.get('success_criteria', [])
     if criteria:
-        for i, criterion in enumerate(criteria, 1):
-            prompt += f"{i}. {criterion}\n"
-    else:
-        prompt += "- Complete the task as described\n"
+        prompt += "\n### Success Criteria\n"
+        for i, c in enumerate(criteria, 1):
+            prompt += f"{i}. {c}\n"
     
-    prefs = task.get('preferences', {})
-    if prefs:
-        prompt += "\n### Preferences\n"
-        for key, value in prefs.items():
-            prompt += f"- {key}: {value}\n"
-    
-    prompt += f"""
-### Instructions
-Execute this task autonomously. Take action immediately without asking for permission.
-Work in the directory: {task.get('workspace_path', WORKSPACE)}
-"""
+    prompt += f"\nWork in: {task.get('workspace_path', WORKSPACE)}"
     return prompt
 
 
 # ============================================================================
-# Claude Agent SDK Runner
+# Message Processing with Detailed Logging
 # ============================================================================
 
-async def process_sdk_message(task_id: str, message, iteration: int):
-    """Process a message from the Claude Agent SDK and log to dashboard."""
+async def process_message(task_id: str, message, turn_count: int):
+    """Process SDK message and log details to dashboard."""
     
-    if isinstance(message, AssistantMessage):
+    if isinstance(message, UserMessage):
+        # User messages often contain tool results
         for block in message.content:
             if isinstance(block, TextBlock):
-                # Claude's text response
-                console.print(Panel(Markdown(block.text[:1000]), title="Claude", border_style="green"))
+                await log_to_api(task_id, "INFO", f"User: {block.text}")
+            elif isinstance(block, ToolResultBlock):
+                # Log tool result with content
+                result_preview = str(block.content)[:500] if block.content else "No output"
+                await log_to_api(
+                    task_id, "RESULT",
+                    f"Tool Result:\n{result_preview}",
+                    tool=None
+                )
+                console.print(f"[dim cyan]→ Result: {result_preview[:200]}...[/dim cyan]")
+                
+    elif isinstance(message, AssistantMessage):
+        for block in message.content:
+            if isinstance(block, TextBlock):
+                # Claude's text response - log full text
+                console.print(Panel(Markdown(block.text[:1500]), title="Claude", border_style="green"))
                 await log_to_api(task_id, "INFO", block.text)
                 
             elif isinstance(block, ToolUseBlock):
-                # Tool being used
-                tool_info = f"Using {block.name}"
-                if hasattr(block, 'input') and block.input:
-                    # Show truncated input
-                    input_str = json.dumps(block.input)[:200]
-                    tool_info += f": {input_str}"
+                # Log tool use with FULL input details
+                tool_name = block.name
+                tool_input = getattr(block, 'input', {})
+                tool_id = getattr(block, 'id', '')
                 
-                console.print(f"[yellow]🔧 {tool_info}[/yellow]")
-                await log_to_api(task_id, "TOOL", f"Using tool: {block.name}", block.name)
+                # Format detailed tool info
+                input_str = json.dumps(tool_input, indent=2) if tool_input else "{}"
                 
-            elif isinstance(block, ToolResultBlock):
-                # Tool result
-                result_preview = str(block.output)[:300] if hasattr(block, 'output') else "..."
-                console.print(f"[dim]   → {result_preview}[/dim]")
+                console.print(f"\n[bold yellow]🔧 {tool_name}[/bold yellow]")
+                console.print(f"[dim]{input_str[:500]}[/dim]")
                 
+                # Log to dashboard with full details
+                log_message = f"{tool_name}\n\nInput:\n```json\n{input_str}\n```"
+                await log_to_api(task_id, "TOOL", log_message, tool=tool_name)
+                
+    elif isinstance(message, SystemMessage):
+        # System messages for context
+        content = getattr(message, 'content', '')
+        if content and isinstance(content, str):
+            await log_to_api(task_id, "DEBUG", f"System: {content[:200]}")
+            
     elif isinstance(message, ResultMessage):
         # Task completed
         console.print("[bold green]✓ Task completed![/bold green]")
+        
+        # Log cost info if available
+        cost = getattr(message, 'total_cost_usd', None)
+        if cost:
+            await log_to_api(task_id, "INFO", f"Task completed. Cost: ${cost:.4f}")
+        else:
+            await log_to_api(task_id, "INFO", "Task completed successfully!")
+            
         await update_task_status(task_id, "COMPLETED", 100)
-        await log_to_api(task_id, "INFO", "Task completed successfully!")
-        return True
-    
-    # Check for any thinking blocks (extended thinking)
-    if hasattr(message, 'content'):
-        for block in message.content:
-            if hasattr(block, 'type') and block.type == 'thinking':
-                thinking_text = getattr(block, 'thinking', '')[:500]
-                console.print(f"[dim magenta]💭 Thinking: {thinking_text}...[/dim magenta]")
-                await log_to_api(task_id, "DEBUG", f"Thinking: {thinking_text[:200]}")
+        return True  # Signal completion
     
     return False
 
 
-async def run_with_sdk(task: dict):
-    """Run the agent using Claude Agent SDK."""
+# ============================================================================
+# Main Agent with ClaudeSDKClient (Streaming)
+# ============================================================================
+
+async def run_agent(task: dict):
+    """Run the agent using ClaudeSDKClient for streaming."""
+    if not SDK_AVAILABLE:
+        console.print("[red]Claude Agent SDK not available![/red]")
+        return
+        
     task_id = task.get("id", "local")
     workspace = task.get("workspace_path", WORKSPACE)
     
     console.print(Panel.fit(
-        "[bold cyan]🚀 Claude Agent SDK Mode[/bold cyan]\n"
+        "[bold cyan]🚀 Claude Agent SDK - Streaming Mode[/bold cyan]\n"
         f"Workspace: {workspace}\n"
-        f"Max Iterations: {MAX_ITERATIONS}",
+        f"Max Turns: {MAX_TURNS}",
         border_style="cyan"
     ))
     
-    # SDK options with built-in tools
+    # Configure SDK options
     options = ClaudeAgentOptions(
-        allowed_tools=["Read", "Write", "Bash", "Glob", "Grep"],
-        permission_mode='acceptEdits',  # Auto-accept file changes
+        allowed_tools=["Read", "Write", "Bash", "Glob", "Grep", "TodoRead", "TodoWrite"],
+        permission_mode='acceptEdits',
         cwd=str(workspace),
-        max_turns=MAX_ITERATIONS,
+        max_turns=MAX_TURNS,
     )
     
     prompt = format_task_prompt(task)
@@ -241,166 +236,71 @@ async def run_with_sdk(task: dict):
     await update_task_status(task_id, "RUNNING", 0)
     await log_to_api(task_id, "INFO", "Agent started with Claude Agent SDK")
     
-    iteration = 0
+    turn_count = 0
     completed = False
     
     try:
-        async for message in query(prompt=prompt, options=options):
-            iteration += 1
+        async with ClaudeSDKClient(options=options) as client:
+            console.print(f"\n[bold]Sending prompt:[/bold]\n{prompt[:500]}...")
+            await client.query(prompt)
             
-            # Update progress
-            progress_pct = min(int((iteration / MAX_ITERATIONS) * 100), 99)
-            await update_task_status(task_id, "RUNNING", progress_pct)
-            
-            # Process and log the message
-            completed = await process_sdk_message(task_id, message, iteration)
-            
-            if completed:
-                break
+            # Process all messages from the streaming response
+            async for message in client.receive_messages():
+                turn_count += 1
                 
-            if iteration >= MAX_ITERATIONS:
-                console.print(f"[yellow]Reached max iterations ({MAX_ITERATIONS})[/yellow]")
-                await update_task_status(task_id, "PAUSED", progress_pct)
-                break
+                # Update progress
+                progress_pct = min(int((turn_count / MAX_TURNS) * 100), 99)
+                if turn_count % 5 == 0:  # Update every 5 messages
+                    await update_task_status(task_id, "RUNNING", progress_pct)
                 
+                # Process and log the message
+                completed = await process_message(task_id, message, turn_count)
+                
+                if completed:
+                    break
+                    
+                if turn_count >= MAX_TURNS * 3:  # Safety limit
+                    console.print(f"[yellow]Reached message limit[/yellow]")
+                    await update_task_status(task_id, "PAUSED", 99)
+                    break
+                    
     except Exception as e:
-        console.print(f"[red]Error during SDK execution: {e}[/red]")
-        await log_to_api(task_id, "ERROR", str(e))
+        error_msg = f"Error during SDK execution: {str(e)}"
+        console.print(f"[red]{error_msg}[/red]")
+        await log_to_api(task_id, "ERROR", error_msg)
         await update_task_status(task_id, "FAILED", 0)
         raise
     
     if not completed:
-        await log_to_api(task_id, "INFO", f"Agent stopped after {iteration} iterations")
+        await log_to_api(task_id, "INFO", f"Agent stopped after {turn_count} messages")
 
 
 # ============================================================================
-# Fallback: Custom Loop (when SDK not available)
+# Entry Point
 # ============================================================================
 
-async def run_with_custom_loop(task: dict):
-    """Fallback: Run with custom anthropic SDK loop (original implementation)."""
-    # Import the original modules
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-    from client import create_client, call_llm
-    from tools import TOOLS, execute_tool
-    from prompts import get_system_prompt
-    
-    task_id = task.get("id", "local")
-    
-    console.print(Panel.fit(
-        "[bold yellow]⚠ Fallback Mode (Custom Loop)[/bold yellow]\n"
-        "Claude Agent SDK not available",
-        border_style="yellow"
-    ))
-    
-    await update_task_status(task_id, "RUNNING", 0)
-    
-    client = create_client()
-    prompt = format_task_prompt(task)
-    messages = [{"role": "user", "content": prompt}]
-    
-    iteration = 0
-    while iteration < MAX_ITERATIONS:
-        iteration += 1
-        progress_pct = min(int((iteration / MAX_ITERATIONS) * 100), 99)
-        await update_task_status(task_id, "RUNNING", progress_pct)
-        
-        console.print(f"\n[bold blue]━━━ Iteration {iteration}/{MAX_ITERATIONS} ━━━[/bold blue]")
-        
-        try:
-            response = await call_llm(client, messages, TOOLS)
-            
-            # Process response
-            assistant_content = []
-            tool_calls = []
-            text_response = ""
-            
-            for block in response.content:
-                if block.type == "text":
-                    text_response += block.text
-                    assistant_content.append({"type": "text", "text": block.text})
-                    console.print(Panel(Markdown(block.text[:500]), title="Agent", border_style="green"))
-                    await log_to_api(task_id, "INFO", block.text[:500])
-                elif block.type == "tool_use":
-                    tool_calls.append(block)
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": block.id,
-                        "name": block.name,
-                        "input": block.input
-                    })
-                    console.print(f"[yellow]🔧 Tool: {block.name}[/yellow]")
-                    await log_to_api(task_id, "TOOL", f"Using tool: {block.name}", block.name)
-            
-            messages.append({"role": "assistant", "content": assistant_content})
-            
-            if tool_calls:
-                tool_results = []
-                for tool_call in tool_calls:
-                    result = await execute_tool(tool_call.name, tool_call.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tool_call.id,
-                        "content": result
-                    })
-                messages.append({"role": "user", "content": tool_results})
-                continue
-            
-            # Check for completion
-            if response.stop_reason == "end_turn":
-                completion_signals = ["task complete", "successfully completed", "all done"]
-                if any(s in text_response.lower() for s in completion_signals):
-                    await update_task_status(task_id, "COMPLETED", 100)
-                    console.print("[bold green]✓ Task completed![/bold green]")
-                    break
-                    
-        except Exception as e:
-            console.print(f"[red]Error: {e}[/red]")
-            await log_to_api(task_id, "ERROR", str(e))
-            await asyncio.sleep(3)
-            continue
-    
-    if iteration >= MAX_ITERATIONS:
-        await update_task_status(task_id, "PAUSED", 99)
-
-
-# ============================================================================
-# Main Entry Point
-# ============================================================================
-
-async def run_autonomous_agent():
-    """Main agent entry point."""
+async def main():
+    """Main entry point."""
     console.print(Panel.fit(
         "[bold magenta]🤖 Autonomous Coding Agent[/bold magenta]\n"
-        f"SDK Available: {SDK_AVAILABLE}\n"
-        f"Mode: {'Headless' if AGENT_HEADLESS else 'GUI (VNC)'}",
+        f"SDK Available: {SDK_AVAILABLE}",
         border_style="magenta"
     ))
     
     task = load_task()
-    
     console.print(f"\n[bold]Task:[/bold] {task.get('name', 'Unknown')}")
     console.print(f"[bold]Workspace:[/bold] {task.get('workspace_path', WORKSPACE)}")
     
-    if SDK_AVAILABLE:
-        await run_with_sdk(task)
-    else:
-        await run_with_custom_loop(task)
-    
+    await run_agent(task)
     console.print("\n[bold]Agent session ended.[/bold]")
 
 
-def main():
-    """Entry point."""
+if __name__ == "__main__":
     try:
-        asyncio.run(run_autonomous_agent())
+        asyncio.run(main())
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted by user[/yellow]")
+        console.print("\n[yellow]Interrupted[/yellow]")
         sys.exit(0)
     except Exception as e:
         console.print(f"\n[red]Fatal error: {e}[/red]")
         raise
-
-
-if __name__ == "__main__":
-    main()
