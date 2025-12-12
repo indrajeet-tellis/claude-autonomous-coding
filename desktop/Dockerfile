@@ -48,7 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     nano \
     supervisor \
-    # Chromium (works on ARM64)
+    # Browser dependencies (chromium is a snap but still provides deps)
     chromium-browser \
     # Chromium dependencies
     libnss3 \
